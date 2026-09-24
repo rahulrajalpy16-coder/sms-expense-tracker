@@ -98,16 +98,70 @@ async function loadImageCanvas(source){
       img=await new Promise((resolve,reject)=>{const i=new Image();i.onload=()=>resolve(i);i.onerror=reject;i.src=url});
     }
     const sw=bmp?bmp.width:img.naturalWidth,sh=bmp?bmp.height:img.naturalHeight;
-    const minWidth=1500,maxLong=2800;
-    let scale=Math.max(1,minWidth/Math.max(1,sw));
-    scale=Math.min(scale,3,maxLong/Math.max(sw,sh));
+    const targetLong=Math.min(3000,Math.max(1800,Math.max(sw,sh)));
+    const scale=Math.min(3,targetLong/Math.max(sw,sh));
     const c=document.createElement('canvas');
     c.width=Math.max(1,Math.round(sw*scale));c.height=Math.max(1,Math.round(sh*scale));
     c.getContext('2d',{willReadFrequently:true}).drawImage(bmp||img,0,0,c.width,c.height);
     return c;
   }finally{if(bmp?.close)bmp.close();if(url)URL.revokeObjectURL(url)}
 }
-function enhanceReceiptCanvas(base,mode='contrast'){
+function cropCanvas(base,x,y,w,h){
+  const out=document.createElement('canvas');
+  out.width=Math.max(1,Math.round(w));out.height=Math.max(1,Math.round(h));
+  out.getContext('2d',{willReadFrequently:true}).drawImage(base,x,y,w,h,0,0,out.width,out.height);
+  return out;
+}
+function detectReceiptCrop(base){
+  const tw=320,th=Math.max(1,Math.round(base.height*tw/base.width));
+  const small=document.createElement('canvas');small.width=tw;small.height=th;
+  const ctx=small.getContext('2d',{willReadFrequently:true});ctx.drawImage(base,0,0,tw,th);
+  const im=ctx.getImageData(0,0,tw,th),d=im.data,n=tw*th,hist=new Uint32Array(256);
+  for(let i=0,p=0;i<d.length;i+=4,p++){
+    const g=Math.max(0,Math.min(255,Math.round(.299*d[i]+.587*d[i+1]+.114*d[i+2])));
+    hist[g]++;
+  }
+  const percentile=q=>{let acc=0,target=n*q;for(let i=0;i<256;i++){acc+=hist[i];if(acc>=target)return i}return 255};
+  const thr=Math.max(130,Math.min(180,percentile(.62)));
+  const mask=new Uint8Array(n),seen=new Uint8Array(n),stack=new Int32Array(n);
+  for(let p=0,i=0;p<n;p++,i+=4){
+    const r=d[i],g=d[i+1],b=d[i+2],gray=.299*r+.587*g+.114*b,sat=Math.max(r,g,b)-Math.min(r,g,b);
+    if(gray>thr&&sat<110)mask[p]=1;
+  }
+  let best=null;
+  for(let p=0;p<n;p++){
+    if(!mask[p]||seen[p])continue;
+    let top=0,sp=0,count=0,minx=tw,maxx=0,miny=th,maxy=0;
+    stack[sp++]=p;seen[p]=1;
+    while(sp){
+      const q=stack[--sp],x=q%tw,y=(q/tw)|0;count++;
+      if(x<minx)minx=x;if(x>maxx)maxx=x;if(y<miny)miny=y;if(y>maxy)maxy=y;
+      const nei=[q-1,q+1,q-tw,q+tw];
+      for(let k=0;k<4;k++){
+        const z=nei[k];if(z<0||z>=n||seen[z]||!mask[z])continue;
+        if(k===0&&x===0)continue;if(k===1&&x===tw-1)continue;
+        seen[z]=1;stack[sp++]=z;
+      }
+    }
+    const bw=maxx-minx+1,bh=maxy-miny+1,ar=bh/Math.max(1,bw),fill=count/(bw*bh);
+    if(count<n*.01||bh<th*.2||ar<1.2||ar>8||fill<.22)continue;
+    const score=count*(1+Math.min(ar,4)*.15);
+    if(!best||score>best.score)best={score,minx,miny,maxx,maxy,bw,bh,fill};
+  }
+  if(!best)return base;
+  if(best.bw>tw*.90&&best.bh>th*.85)return base;
+  const padX=Math.max(8,best.bw*.10),padY=Math.max(10,best.bh*.08);
+  const x0=Math.max(0,best.minx-padX),y0=Math.max(0,best.miny-padY),x1=Math.min(tw,best.maxx+padX),y1=Math.min(th,best.maxy+padY);
+  const sx=base.width/tw,sy=base.height/th;
+  let crop=cropCanvas(base,x0*sx,y0*sy,(x1-x0)*sx,(y1-y0)*sy);
+  if(crop.width<1400){
+    const scale=Math.min(3,1400/crop.width),up=document.createElement('canvas');
+    up.width=Math.round(crop.width*scale);up.height=Math.round(crop.height*scale);
+    up.getContext('2d',{willReadFrequently:true}).drawImage(crop,0,0,up.width,up.height);crop=up;
+  }
+  return crop;
+}
+function enhanceReceiptCanvas(base,mode='gray'){
   const ctx=base.getContext('2d',{willReadFrequently:true}),w=base.width,h=base.height;
   const src=ctx.getImageData(0,0,w,h),hist=new Uint32Array(256);
   for(let i=0;i<src.data.length;i+=16){
@@ -115,39 +169,89 @@ function enhanceReceiptCanvas(base,mode='contrast'){
     hist[Math.max(0,Math.min(255,Math.round(.299*r+.587*g+.114*b)))]++;
   }
   const total=hist.reduce((a,b)=>a+b,0),pct=p=>{let n=0;for(let i=0;i<256;i++){n+=hist[i];if(n>=total*p)return i}return 255};
-  const lo=pct(.03),hi=Math.max(lo+35,pct(.98));
+  const lo=pct(.02),hi=Math.max(lo+45,pct(.985));
   const out=document.createElement('canvas');out.width=w;out.height=h;
   const octx=out.getContext('2d'),img=octx.createImageData(w,h);
   for(let i=0;i<src.data.length;i+=4){
     const gray=.299*src.data[i]+.587*src.data[i+1]+.114*src.data[i+2];
-    let v=(gray-lo)*255/(hi-lo);
-    v=Math.max(0,Math.min(255,(v-128)*1.18+145));
-    if(mode==='threshold')v=v>155?255:0;
-    img.data[i]=img.data[i+1]=img.data[i+2]=v;img.data[i+3]=255;
+    let v=mode==='gray'?gray:(gray-lo)*255/(hi-lo);
+    if(mode!=='gray')v=Math.max(0,Math.min(255,(v-128)*1.12+140));
+    if(mode==='threshold')v=v>158?255:0;
+    img.data[i]=img.data[i+1]=img.data[i+2]=Math.max(0,Math.min(255,v));img.data[i+3]=255;
   }
-  octx.putImageData(img,0,0);
-  return out;
+  octx.putImageData(img,0,0);return out;
 }
-function ocrParseQuality(text){
-  try{
-    const p=SMSParser.parseInvoiceText(text||'');
-    return (p.date?2:0)+(Number.isFinite(Number(p.total))?3:0)+(p.vendor?1.5:0)+(p.bill_no?1:0)+(p.description?1:0)+(p.vat!=null?.5:0);
-  }catch{return 0}
+function parsedEssentialScore(p){
+  const c=p?.confidence||{};let s=0;
+  if(p?.date)s+=3*(c.date||.5);
+  if(p?.vendor)s+=2*(c.vendor||.5);
+  if(Number.isFinite(Number(p?.total)))s+=4*(c.amount||.5);
+  if(p?.currency)s+=1.5*(c.currency||.5);
+  if(p?.bill_no)s+=1.5*(c.bill_no||.5);
+  if(p?.vat!=null)s+=.5*(c.vat||.5);
+  return s;
+}
+function chooseConsensusAmount(parsed,field,confField){
+  const vals=parsed.map((p,i)=>({i,v:Number(p?.[field]),c:Number(p?.confidence?.[confField]||0)})).filter(x=>Number.isFinite(x.v)&&x.v>=0);
+  if(!vals.length)return null;
+  let best=vals[0],bestScore=-1;
+  for(const a of vals){
+    let repeat=0;for(const b of vals)if(Math.abs(a.v-b.v)<=.02)repeat++;
+    const score=repeat*10+a.c;
+    if(score>bestScore){bestScore=score;best=a}
+  }
+  return best;
+}
+function mergeOcrCandidates(texts){
+  const parsed=texts.map(t=>SMSParser.parseInvoiceText(t||''));
+  const ranked=parsed.map((p,i)=>({p,i,s:parsedEssentialScore(p)})).sort((a,b)=>b.s-a.s);
+  const best=ranked[0]?.p||{};
+  const pick=(field,confField)=>{
+    let out=null,score=-1;
+    parsed.forEach((p,i)=>{const val=p?.[field],c=Number(p?.confidence?.[confField]||0);if(val!=null&&val!==''&&(c>score)){out={val,i,c};score=c}});
+    return out;
+  };
+  const date=pick('date','date'),vendor=pick('vendor','vendor'),bill=pick('bill_no','bill_no'),currency=pick('currency','currency'),job=pick('enq_job_no','enq_job_no');
+  const amount=chooseConsensusAmount(parsed,'total','amount'),vat=chooseConsensusAmount(parsed,'vat','vat');
+  const desc=pick('description','description');
+  const lines=[];
+  if(vendor?.val)lines.push(String(vendor.val));
+  if(date?.val)lines.push(`Date: ${date.val}`);
+  if(bill?.val)lines.push(`Receipt No: ${bill.val}`);
+  if(job?.val)lines.push(`Job No: ${job.val}`);
+  if(currency?.val)lines.push(`Currency: ${currency.val}`);
+  if(amount)lines.push(`Total Amount: ${amount.v.toFixed(2)} ${currency?.val||best.currency||'AED'}`);
+  if(vat)lines.push(`VAT Amount: ${vat.v.toFixed(2)}`);
+  if(desc?.val)lines.push(`Description: ${desc.val}`);
+  lines.push('', '--- OCR RAW ---', ...texts);
+  return lines.join('\n');
+}
+async function ocrOne(worker,canvas,psm,progress,label){
+  progress?.(label);
+  try{await worker.setParameters({tessedit_pageseg_mode:String(psm),preserve_interword_spaces:'1',user_defined_dpi:'300'})}catch{}
+  const r=await worker.recognize(canvas);return r.data.text||'';
 }
 async function imageOcr(source,progress){
-  const worker=await getOcrWorker(progress),base=await loadImageCanvas(source);
-  progress?.('Enhancing receipt image…');
-  const contrast=enhanceReceiptCanvas(base,'contrast');
+  const worker=await getOcrWorker(progress),base=await loadImageCanvas(source),texts=[];
+  const original=enhanceReceiptCanvas(base,'gray');
+  texts.push(await ocrOne(worker,original,6,progress,'Scanning receipt…'));
+  let p=SMSParser.parseInvoiceText(texts[0]||'');
+  const firstReady=p.date&&p.vendor&&Number.isFinite(Number(p.total))&&p.currency&&p.bill_no&&(p.confidence?.date||0)>=.75&&(p.confidence?.amount||0)>=.8;
+  if(firstReady)return mergeOcrCandidates(texts);
+
+  const receipt=detectReceiptCrop(base);
+  const contrast=enhanceReceiptCanvas(receipt,'contrast');
+  texts.push(await ocrOne(worker,contrast,6,progress,'Focusing on the receipt and rescanning…'));
+  p=SMSParser.parseInvoiceText(mergeOcrCandidates(texts));
+  if(!(p.date&&p.vendor&&Number.isFinite(Number(p.total))&&p.bill_no)){
+    const threshold=enhanceReceiptCanvas(receipt,'threshold');
+    texts.push(await ocrOne(worker,threshold,4,progress,'Running final receipt scan…'));
+  }else{
+    // One extra layout pass protects against a single OCR digit error in totals/dates.
+    texts.push(await ocrOne(worker,contrast,4,progress,'Verifying detected values…'));
+  }
   try{await worker.setParameters({tessedit_pageseg_mode:'6'})}catch{}
-  const first=await worker.recognize(contrast),text1=first.data.text||'';
-  const q1=ocrParseQuality(text1);
-  if(q1>=6.5||text1.replace(/\s/g,'').length>180)return text1;
-  progress?.('Trying a second receipt scan for better accuracy…');
-  const threshold=enhanceReceiptCanvas(base,'threshold');
-  try{await worker.setParameters({tessedit_pageseg_mode:'4'})}catch{}
-  const second=await worker.recognize(threshold),text2=second.data.text||'';
-  try{await worker.setParameters({tessedit_pageseg_mode:'6'})}catch{}
-  return ocrParseQuality(text2)>q1?text2:text1;
+  return mergeOcrCandidates(texts);
 }
 async function extractTextFromFile(file,progress=()=>{}){const type=(file.type||'').toLowerCase(),name=(file.name||'').toLowerCase();if(type.startsWith('image/'))return imageOcr(file,progress);if(type==='text/plain'||type==='text/csv'||/\.(txt|csv)$/i.test(name))return file.text();if(type==='application/pdf'||name.endsWith('.pdf'))return pdfTextOrOcr(file,progress);return ''}
 async function pdfTextOrOcr(file,progress){if(!window.pdfjsLib)throw new Error('PDF library is not loaded');pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';const data=await file.arrayBuffer(),pdf=await pdfjsLib.getDocument({data}).promise;let text='';for(let i=1;i<=Math.min(pdf.numPages,4);i++){progress(`Reading PDF text · page ${i}/${Math.min(pdf.numPages,4)}`);const page=await pdf.getPage(i),tc=await page.getTextContent();text+=tc.items.map(x=>x.str).join(' ')+'\n'}if(text.replace(/\s/g,'').length>80)return text;let ocr='';for(let i=1;i<=Math.min(pdf.numPages,2);i++){progress(`Rendering scanned PDF · page ${i}`);const page=await pdf.getPage(i),viewport=page.getViewport({scale:1.7}),canvas=document.createElement('canvas'),ctx=canvas.getContext('2d');canvas.width=viewport.width;canvas.height=viewport.height;await page.render({canvasContext:ctx,viewport}).promise;ocr+=await imageOcr(canvas,progress)+'\n'}return ocr}
