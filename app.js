@@ -25,7 +25,49 @@ async function init(){await SMSDB.open();registerPwa();if(!await meta('deviceId'
 function registerPwa(){if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').then(()=>navigator.serviceWorker.ready).catch(()=>{});window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();state.deferredInstall=e;document.querySelectorAll('[data-install]').forEach(b=>b.hidden=false)});}
 async function warmRuntime(progress=()=>{}){if(!navigator.onLine)throw new Error('Connect to the internet for the one-time offline preparation.');if('serviceWorker'in navigator){try{await navigator.serviceWorker.ready}catch{}}progress('Caching export/OCR libraries…');for(let i=0;i<RUNTIME_ASSETS.length;i++){progress(`Caching offline component ${i+1}/${RUNTIME_ASSETS.length}…`);try{await fetch(RUNTIME_ASSETS[i],{cache:'reload',mode:'cors'})}catch{try{await fetch(RUNTIME_ASSETS[i],{cache:'reload',mode:'no-cors'})}catch{}}}progress('Loading the local OCR engine…');const canvas=document.createElement('canvas');canvas.width=180;canvas.height=55;const ctx=canvas.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,180,55);ctx.fillStyle='black';ctx.font='22px sans-serif';ctx.fillText('SMS 123',8,34);await imageOcr(canvas,progress);await setMeta('offlineReady',Date.now());progress('Offline OCR/export preparation completed.');return true;}
 function renderSetup(){$('#app').innerHTML=`<div class="content"><div class="card setup-card"><img src="icons/sms-logo.png" style="width:150px"><h1>Set up your local Expense Tracker</h1><p class="muted">This profile and all expense data stay on this device.</p><form id="setup"><div class="field"><label>Your name</label><input class="input" name="name" required></div><div class="field"><label>Designation</label><input class="input" name="designation"></div><button class="btn primary full">Start local app</button></form></div></div>`;$('#setup').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.currentTarget);state.profile={name:String(f.get('name')).trim(),designation:String(f.get('designation')).trim()};await setMeta('profile',state.profile);await setMeta('lastBackup',null);show('dashboard')}}
-function shell(content,active='dashboard'){return `<div class="app-shell"><aside class="sidebar"><div class="side-brand"><img src="icons/sms-logo.png"><div><strong>SMS Expense Tracker</strong><span>Local-first edition</span></div></div><nav class="nav"><button data-nav="dashboard" class="${active==='dashboard'?'active':''}">▦ &nbsp;Reimbursement</button><button data-nav="backup" class="${active==='backup'?'active':''}">⇄ &nbsp;Backup & Transfer</button><button data-nav="settings" class="${active==='settings'?'active':''}">◉ &nbsp;Profile & Settings</button></nav><div class="side-bottom"><div class="backup-status">Database & invoices: stored on this device</div><button class="btn ghost full" data-install hidden>Install app</button><div class="side-user"><b>${esc(state.profile?.name)}</b><small>${esc(state.profile?.designation||'')}</small></div></div></aside><div class="main"><div class="mobile-top"><img src="icons/sms-logo.png"><div class="mobile-nav"><button data-nav="dashboard" class="${active==='dashboard'?'active':''}">▦</button><button data-nav="backup" class="${active==='backup'?'active':''}">⇄</button><button data-nav="settings" class="${active==='settings'?'active':''}">◉</button></div></div><header class="topbar"><div class="crumb">SMS Expense Tracker / ${active==='dashboard'?'Reimbursement':active==='backup'?'Backup & Transfer':'Settings'}</div><span class="offline-badge">Local data</span></header><main class="content">${content}</main></div></div>`}
+function shell(content,active='dashboard'){
+  const mobileTitle=active==='dashboard'?'Expenses':active==='backup'?'Transfer':'Settings';
+  return `<div class="app-shell">
+    <aside class="sidebar">
+      <div class="side-brand"><img src="icons/sms-logo.png"><div><strong>SMS Expense Tracker</strong><span>Local-first edition</span></div></div>
+      <nav class="nav">
+        <button data-nav="dashboard" class="${active==='dashboard'?'active':''}">▦ &nbsp;Reimbursement</button>
+        <button data-nav="backup" class="${active==='backup'?'active':''}">⇄ &nbsp;Backup & Transfer</button>
+        <button data-nav="settings" class="${active==='settings'?'active':''}">◉ &nbsp;Profile & Settings</button>
+      </nav>
+      <div class="side-bottom">
+        <div class="backup-status">Database & invoices: stored on this device</div>
+        <button class="btn ghost full" data-install hidden>Install app</button>
+        <div class="side-user"><b>${esc(state.profile?.name)}</b><small>${esc(state.profile?.designation||'')}</small></div>
+      </div>
+    </aside>
+    <div class="main">
+      <header class="mobile-header">
+        <div class="mobile-header-brand">
+          <img src="icons/sms-logo.png" alt="SMS">
+          <div><b>${mobileTitle}</b><small>SMS Expense Tracker</small></div>
+        </div>
+        <span class="offline-badge">On-device</span>
+      </header>
+      <header class="topbar">
+        <div class="crumb">SMS Expense Tracker / ${active==='dashboard'?'Reimbursement':active==='backup'?'Backup & Transfer':'Settings'}</div>
+        <span class="offline-badge">Local data</span>
+      </header>
+      <main class="content">${content}</main>
+      <nav class="mobile-tabbar" aria-label="Main navigation">
+        <button data-nav="dashboard" class="${active==='dashboard'?'active':''}" aria-label="Expenses">
+          <span class="tab-icon">▦</span><span>Expenses</span>
+        </button>
+        <button data-nav="backup" class="${active==='backup'?'active':''}" aria-label="Transfer">
+          <span class="tab-icon">⇄</span><span>Transfer</span>
+        </button>
+        <button data-nav="settings" class="${active==='settings'?'active':''}" aria-label="Settings">
+          <span class="tab-icon">◉</span><span>Settings</span>
+        </button>
+      </nav>
+    </div>
+  </div>`
+}
 function wireShell(){document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>show(b.dataset.nav));document.querySelectorAll('[data-install]').forEach(b=>b.onclick=async()=>{if(state.deferredInstall){state.deferredInstall.prompt();await state.deferredInstall.userChoice;state.deferredInstall=null}else toast('On iPhone: Safari → Share → Add to Home Screen. On Windows: Edge/Chrome → Install app.','ok')})}
 async function show(view,payload){state.view=view;if(view==='dashboard')await dashboard();if(view==='voucher')await voucher(payload);if(view==='backup')await backupPage();if(view==='settings')await settingsPage()}
 async function dashboard(){const vouchers=(await SMSDB.byIndex('vouchers','year',state.year)).sort((a,b)=>a.month-b.month);const allExp=(await SMSDB.all('expenses')).filter(x=>!x.deletedAt);const rows=vouchers.map(v=>{const e=allExp.filter(x=>x.voucherId===v.id);return{...v,count:e.length,total:e.reduce((a,x)=>a+Number(x.aedAmount||0),0),native:e.filter(x=>x.currency==='AED').reduce((a,x)=>a+Number(x.aedAmount||0),0)}});const total=rows.reduce((a,x)=>a+x.total,0),count=rows.reduce((a,x)=>a+x.count,0);const lastBackup=await meta('lastBackup');const cards=MONTHS.map((m,i)=>{const x=rows.find(z=>z.month===i+1);return `<div class="card month-card"><div class="month-title"><b>${m} ${state.year}</b>${x?`<span class="pill ${x.status||'draft'}">${esc(x.status||'draft')}</span>`:''}</div>${x?`<div class="month-total">AED ${money(x.total)}</div><div class="month-meta"><span><b>${x.count}</b> bills</span><span>AED ${money(x.native)} local</span><span>AED ${money(x.total-x.native)} converted</span></div><button class="btn primary sm" data-open="${x.id}">Open voucher</button>`:`<div class="muted">No voucher created.</div><button class="btn secondary sm" data-create="${i+1}">+ Create voucher</button>`}</div>`}).join('');$('#app').innerHTML=shell(`<div class="local-banner"><b>No VPS/database server:</b> this device holds the database and original bill files. ${lastBackup?`Last backup: ${new Date(lastBackup).toLocaleString()}`:'No backup created yet.'}</div><div class="page-head"><div><h1>Reimbursement Vouchers</h1><p>Capture bills, scan locally in your browser, review, and export the Sinor Marine voucher.</p></div><div class="actions"><select id="yearSel">${Array.from({length:7},(_,i)=>new Date().getFullYear()-3+i).map(y=>`<option ${y===state.year?'selected':''}>${y}</option>`).join('')}</select><button class="btn secondary" data-install hidden>Install app</button></div></div><div class="stat-grid"><div class="card stat"><span>Year total</span><strong>AED ${money(total)}</strong></div><div class="card stat"><span>Bills this year</span><strong>${count}</strong></div><div class="card stat"><span>Vouchers</span><strong>${rows.length}</strong></div></div><div class="month-grid">${cards}</div>`,'dashboard');wireShell();$('#yearSel').onchange=e=>{state.year=Number(e.target.value);dashboard()};document.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>show('voucher',b.dataset.open));document.querySelectorAll('[data-create]').forEach(b=>b.onclick=async()=>{const month=Number(b.dataset.create),existing=(await SMSDB.byIndex('vouchers','ym',[state.year,month]))[0];const v=existing||{id:uid(),month,year:state.year,status:'draft',advanceAmount:0,createdAt:Date.now(),updatedAt:Date.now()};await SMSDB.put('vouchers',v);show('voucher',v.id)})}
