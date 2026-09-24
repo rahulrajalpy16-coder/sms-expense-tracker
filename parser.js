@@ -11,27 +11,37 @@ function moneyNumber(v){
   const n=Number(s);return Number.isFinite(n)?n:null;
 }
 function normalizeText(text){return String(text||'').replace(/\r/g,'').replace(/[ \t]+/g,' ').replace(/\n{3,}/g,'\n\n').trim()}
-function findCurrency(text){
+function findCurrency(text,vendor){
   const upper=text.toUpperCase();
-  const patterns=[['AED',/\bAED\b|\bDHS?\b|د\.?إ|درهم/i],['USD',/\bUSD\b|US\s*\$|\$/i],['EUR',/\bEUR\b|€/i],['GBP',/\bGBP\b|£/i],['SAR',/\bSAR\b|\bSR\b/i],['QAR',/\bQAR\b/i],['OMR',/\bOMR\b/i],['INR',/\bINR\b|₹/i]];
-  for(const [code,re] of patterns)if(re.test(upper))return{value:code,confidence:.96};
-  return{value:'AED',confidence:.45};
+  const codes=[['AED',/\bAED\b|\bDHS?\b|د\.?إ|درهم/i],['USD',/\bUSD\b|US\s*\$/i],['EUR',/\bEUR\b/i],['GBP',/\bGBP\b/i],['SAR',/\bSAR\b|\bSR\b/i],['QAR',/\bQAR\b/i],['OMR',/\bOMR\b/i],['INR',/\bINR\b/i]];
+  for(const [code,re] of codes)if(re.test(upper))return{value:code,confidence:.98};
+  const uae=/\b(ENOC|EPPCO|ADNOC|EMARAT|ACTIV8|ACTIV\s*8)\b/i.test(`${vendor||''} ${text}`)||/\bUAE\b|DUBAI|ABU\s*DHABI|\bTRN\b/i.test(upper);
+  if(uae)return{value:'AED',confidence:.93};
+  if(/\$/.test(text))return{value:'USD',confidence:.72};
+  if(/€/.test(text))return{value:'EUR',confidence:.85};
+  if(/£/.test(text))return{value:'GBP',confidence:.85};
+  if(/₹/.test(text))return{value:'INR',confidence:.85};
+  return{value:'AED',confidence:.55};
 }
 function parseDate(text){
-  const candidates=[
-    /(?:invoice\s*date|inv\.?\s*date|receipt\s*date|date)\s*[:#-]?\s*(\d{4}[\/-]\d{1,2}[\/-]\d{1,2})/i,
-    /(?:invoice\s*date|inv\.?\s*date|receipt\s*date|date)\s*[:#-]?\s*(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/i,
-    /\b(\d{4}[\/-]\d{1,2}[\/-]\d{1,2})\b/,
-    /\b(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})\b/,
-    /\b(\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{2,4})\b/i
-  ];
-  for(let i=0;i<candidates.length;i++){
-    const m=text.match(candidates[i]);if(!m)continue;const raw=m[1];let y,mo,d;
-    if(/^\d{4}/.test(raw)){[y,mo,d]=raw.split(/[\/-]/).map(Number)}
-    else if(/^[0-9]{1,2}\s+[A-Za-z]/.test(raw)){const dt=new Date(raw);if(!Number.isNaN(dt.valueOf()))return{value:dt.toISOString().slice(0,10),confidence:i<2?.97:.82};continue}
-    else{const parts=raw.split(/[\/-]/).map(Number);d=parts[0];mo=parts[1];y=parts[2]<100?2000+parts[2]:parts[2]}
-    if(y>=2000&&y<=2100&&mo>=1&&mo<=12&&d>=1&&d<=31)return{value:`${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`,confidence:i<2?.97:.80};
+  const maxYear=new Date().getFullYear()+1;
+  const accept=(y,mo,d,confidence)=>{
+    y=Number(y);mo=Number(mo);d=Number(d);
+    if(y<2000||y>maxYear||mo<1||mo>12||d<1||d>31)return null;
+    return{value:`${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`,confidence};
+  };
+  const lines=text.split('\n').map(x=>x.trim()).filter(Boolean);
+  const ordered=[...lines.filter(x=>/(?:inv(?:oice)?\s*date|receipt\s*date|\bdate\b)/i.test(x)),...lines];
+  for(const line of ordered){
+    let m=line.match(/(?:inv(?:oice)?\s*date|receipt\s*date|\bdate\b)?\s*[:#;=.-]*\s*(20\d{2})\D{1,3}(\d{1,2})\D{1,3}(\d{1,2})/i);
+    if(m){const a=accept(m[1],m[2],m[3],/(?:inv(?:oice)?\s*date|receipt\s*date|\bdate\b)/i.test(line)?.98:.84);if(a)return a}
+    m=line.match(/(?:inv(?:oice)?\s*date|receipt\s*date|\bdate\b)?\s*[:#;=.-]*\s*(\d{1,2})\D{1,3}(\d{1,2})\D{1,3}(20)\D{0,3}(\d)/i);
+    if(m){const a=accept(`${m[3]}${m[4]}`,m[2],m[1],/(?:inv(?:oice)?\s*date|receipt\s*date|\bdate\b)/i.test(line)?.97:.82);if(a)return a}
+    m=line.match(/(?:inv(?:oice)?\s*date|receipt\s*date|\bdate\b)?\s*[:#;=.-]*\s*(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})/i);
+    if(m){let y=Number(m[3]);if(y<100)y+=2000;const a=accept(y,m[2],m[1],/(?:inv(?:oice)?\s*date|receipt\s*date|\bdate\b)/i.test(line)?.97:.8);if(a)return a}
   }
+  const named=text.match(/\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{2,4})\b/i);
+  if(named){let y=Number(named[3]);if(y<100)y+=2000;const mo=['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'].indexOf(named[2].toLowerCase().slice(0,3))+1;const a=accept(y,mo,named[1],.8);if(a)return a}
   return{value:null,confidence:0};
 }
 function findBillNo(text,vendor){
@@ -129,7 +139,7 @@ function classifyDescription(text,vendor){
   return{value:'Sales Expense',confidence:.65};
 }
 function parseInvoiceText(raw){
-  const text=normalizeText(raw),date=parseDate(text),vendor=findVendor(text),billNo=findBillNo(text,vendor.value),jobNo=findJobNo(text),currency=findCurrency(text),amounts=extractAmounts(text),description=classifyDescription(text,vendor.value);
+  const text=normalizeText(raw),date=parseDate(text),vendor=findVendor(text),billNo=findBillNo(text,vendor.value),jobNo=findJobNo(text),currency=findCurrency(text,vendor.value),amounts=extractAmounts(text),description=classifyDescription(text,vendor.value);
   return{date:date.value,vendor:vendor.value,bill_no:billNo.value,enq_job_no:jobNo.value,currency:currency.value,total:amounts.total,vat:amounts.vat,description:description.value,confidence:{date:date.confidence,vendor:vendor.confidence,bill_no:billNo.confidence,enq_job_no:jobNo.confidence,currency:currency.confidence,amount:amounts.totalConfidence,vat:amounts.vatConfidence,description:description.confidence}};
 }
 window.SMSParser={parseInvoiceText};
