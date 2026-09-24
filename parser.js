@@ -62,8 +62,8 @@ function parseDate(text){
   return{value:null,confidence:0};
 }
 function findBillNo(text,vendor){
-  const invoice=[/(?:invoice\s*(?:no\.?|number|#)|inv\.?\s*no\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/\-\)\]\|Il]{2,})/i,.97];
-  const receipt=[/(?:receipt\s*(?:no\.?|number|#))\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/\-\)\]\|Il]{2,})/i,.94];
+  const invoice=[/(?:invo[iIl1]ce\s*(?:no\.?|number|#)|inv\.?\s*no\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/\-\)\]\|Il]{2,})/i,.97];
+  const receipt=[/(?:rece[iIl1]pt\s*(?:no\.?|number|#))\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/\-\)\]\|Il]{2,})/i,.94];
   const bill=[/(?:bill\s*(?:no\.?|number|#))\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/\-\)\]\|Il]{2,})/i,.92];
   const fuel=/ENOC|EPPCO|ADNOC|Emarat/i.test(vendor||'');
   const clean=raw=>{
@@ -178,6 +178,7 @@ function parseInvoiceText(raw){
     vat=Math.round((Number(amounts.total)*5/105)*100)/100;
     vatConfidence=.82;
   }
+  if(vat!=null)vat=Math.round(Number(vat)*100)/100;
   return{date:date.value,vendor:vendor.value,bill_no:billNo.value,enq_job_no:jobNo.value,currency:currency.value,total:amounts.total,vat,description:description.value,confidence:{date:date.confidence,vendor:vendor.confidence,bill_no:billNo.confidence,enq_job_no:jobNo.confidence,currency:currency.confidence,amount:amounts.totalConfidence,vat:vatConfidence,description:description.confidence}};
 }
 window.SMSParser={parseInvoiceText};
