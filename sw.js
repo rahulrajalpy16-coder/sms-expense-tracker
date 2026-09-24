@@ -1,4 +1,4 @@
-const CACHE='sms-expense-v2-ios';
+const CACHE='sms-expense-v3-receipts';
 const APP=['./','./index.html','./styles.css','./db.js','./parser.js','./app.js','./manifest.webmanifest','./icons/sms-logo.png','./icons/icon-192.png','./icons/icon-512.png','./templates/SMS_Reimbursement_Voucher_Template.xlsx'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(APP)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',e=>e.waitUntil(Promise.all([self.clients.claim(),caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('sms-expense-local-')&&k!==CACHE).map(k=>caches.delete(k))))])));
