@@ -34,12 +34,12 @@ function parseDate(text){
   }
   return{value:null,confidence:0};
 }
-function findBillNo(text){
-  const patterns=[
-    [/(?:invoice\s*(?:no\.?|number|#)|inv\.?\s*no\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/-]{2,})/i,.97],
-    [/(?:receipt\s*(?:no\.?|number|#))\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/-]{2,})/i,.94],
-    [/(?:bill\s*(?:no\.?|number|#))\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/-]{2,})/i,.92]
-  ];
+function findBillNo(text,vendor){
+  const invoice=[/(?:invoice\s*(?:no\.?|number|#)|inv\.?\s*no\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/-]{2,})/i,.97];
+  const receipt=[/(?:receipt\s*(?:no\.?|number|#))\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/-]{2,})/i,.94];
+  const bill=[/(?:bill\s*(?:no\.?|number|#))\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/-]{2,})/i,.92];
+  const fuel=/ENOC|EPPCO|ADNOC|Emarat/i.test(vendor||'');
+  const patterns=fuel?[receipt,invoice,bill]:[invoice,receipt,bill];
   for(const [re,confidence] of patterns){const m=text.match(re);if(m){const v=m[1].replace(/[^A-Z0-9\/-]/gi,'').trim();if(v&&!/^\d{1,2}$/.test(v))return{value:v,confidence}}}
   return{value:null,confidence:0};
 }
@@ -129,7 +129,7 @@ function classifyDescription(text,vendor){
   return{value:'Sales Expense',confidence:.65};
 }
 function parseInvoiceText(raw){
-  const text=normalizeText(raw),date=parseDate(text),vendor=findVendor(text),billNo=findBillNo(text),jobNo=findJobNo(text),currency=findCurrency(text),amounts=extractAmounts(text),description=classifyDescription(text,vendor.value);
+  const text=normalizeText(raw),date=parseDate(text),vendor=findVendor(text),billNo=findBillNo(text,vendor.value),jobNo=findJobNo(text),currency=findCurrency(text),amounts=extractAmounts(text),description=classifyDescription(text,vendor.value);
   return{date:date.value,vendor:vendor.value,bill_no:billNo.value,enq_job_no:jobNo.value,currency:currency.value,total:amounts.total,vat:amounts.vat,description:description.value,confidence:{date:date.confidence,vendor:vendor.confidence,bill_no:billNo.confidence,enq_job_no:jobNo.confidence,currency:currency.confidence,amount:amounts.totalConfidence,vat:amounts.vatConfidence,description:description.confidence}};
 }
 window.SMSParser={parseInvoiceText};
