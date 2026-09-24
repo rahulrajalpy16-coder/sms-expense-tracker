@@ -9,6 +9,7 @@ self.addEventListener('fetch',e=>{
     e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request).then(resp=>{const cp=resp.clone();caches.open(CACHE).then(c=>c.put(e.request,cp));return resp}).catch(()=>caches.match('./index.html'))));
     return;
   }
+  // Runtime libraries / OCR model are fetched only by the browser, cached locally after first online preparation.
   e.respondWith(caches.open(CACHE).then(async c=>{
     const hit=await c.match(e.request);if(hit)return hit;
     try{const r=await fetch(e.request);if(r.ok||r.type==='opaque')await c.put(e.request,r.clone());return r}catch(err){throw err}

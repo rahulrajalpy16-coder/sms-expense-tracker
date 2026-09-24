@@ -1,21 +1,25 @@
-# SMS Expense Tracker — Private Local PWA
+# SMS Expense Tracker
 
 Offline-first expense tracker for Sinor Marine Services.
 
-## Privacy model
-- This GitHub repository is private.
-- Expense records, uploaded invoices, OCR results, and local settings are stored on the user's device (IndexedDB), not committed to this repository.
-- The repository contains only the application code, branding assets, and the reimbursement workbook template.
-- Do not enable a public GitHub Pages deployment if private access is required.
+## Live app
+GitHub Pages URL:
+https://rahulrajalpy16-coder.github.io/sms-expense-tracker/
 
-## Windows
-Use the standalone Windows build for a fully local installation.
+## Privacy model
+The public repository contains the application code, branding assets, and reimbursement workbook template.
+
+Your actual expense entries, uploaded bills/invoices, OCR results, and local settings remain in the browser/device database (IndexedDB). They are not written to this GitHub repository.
 
 ## iPhone
-The PWA can be installed from an HTTPS static host. For private-only access, use an access-controlled static host connected to this private repository (for example, Cloudflare Pages + Access) rather than ordinary public GitHub Pages.
+Open the live URL in Safari and choose **Share → Add to Home Screen**.
+While online the first time, use **Prepare offline OCR & exports** so the required runtime components are cached.
 
-## Data transfer
-Use the encrypted `.smsexp` backup/merge file to move or merge records between iPhone and Windows.
+## Windows
+The same web app can be used from the Pages URL. The project also has a separate standalone local Windows executable build.
 
-## Security
-No Supabase, Lovable AI, Gemini, hosted SQL database, or VPS is required by this edition.
+## Transfer between devices
+Use encrypted `.smsexp` export/merge files to move or merge expense data between iPhone and Windows.
+
+## No recurring server requirement
+This edition does not require Supabase, Lovable AI, Gemini, hosted SQL, Docker, or a VPS.
