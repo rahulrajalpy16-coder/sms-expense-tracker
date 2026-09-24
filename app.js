@@ -181,6 +181,32 @@ function enhanceReceiptCanvas(base,mode='gray'){
   }
   octx.putImageData(img,0,0);return out;
 }
+function adaptiveThresholdCanvas(base){
+  let src=base;
+  const maxW=1100,maxH=3000,scale=Math.min(1,maxW/base.width,maxH/base.height);
+  if(scale<1){
+    const c=document.createElement('canvas');c.width=Math.max(1,Math.round(base.width*scale));c.height=Math.max(1,Math.round(base.height*scale));
+    c.getContext('2d',{willReadFrequently:true}).drawImage(base,0,0,c.width,c.height);src=c;
+  }
+  const w=src.width,h=src.height,ctx=src.getContext('2d',{willReadFrequently:true}),im=ctx.getImageData(0,0,w,h),d=im.data,n=w*h;
+  const gray=new Uint8Array(n),integral=new Uint32Array((w+1)*(h+1));
+  for(let y=0;y<h;y++){
+    let row=0;
+    for(let x=0;x<w;x++){
+      const p=y*w+x,i=p*4,g=Math.max(0,Math.min(255,Math.round(.299*d[i]+.587*d[i+1]+.114*d[i+2])));
+      gray[p]=g;row+=g;integral[(y+1)*(w+1)+x+1]=integral[y*(w+1)+x+1]+row;
+    }
+  }
+  const out=document.createElement('canvas');out.width=w;out.height=h;const octx=out.getContext('2d'),img=octx.createImageData(w,h),r=17,C=15;
+  for(let y=0;y<h;y++){
+    const y0=Math.max(0,y-r),y1=Math.min(h-1,y+r);
+    for(let x=0;x<w;x++){
+      const x0=Math.max(0,x-r),x1=Math.min(w-1,x+r),A=integral[y0*(w+1)+x0],B=integral[y0*(w+1)+x1+1],D=integral[(y1+1)*(w+1)+x0],E=integral[(y1+1)*(w+1)+x1+1],area=(x1-x0+1)*(y1-y0+1),mean=(E-B-D+A)/area,v=gray[y*w+x]>mean-C?255:0,i=(y*w+x)*4;
+      img.data[i]=img.data[i+1]=img.data[i+2]=v;img.data[i+3]=255;
+    }
+  }
+  octx.putImageData(img,0,0);return out;
+}
 function parsedEssentialScore(p){
   const c=p?.confidence||{};let s=0;
   if(p?.date)s+=3*(c.date||.5);
@@ -243,12 +269,11 @@ async function imageOcr(source,progress){
   const contrast=enhanceReceiptCanvas(receipt,'contrast');
   texts.push(await ocrOne(worker,contrast,6,progress,'Focusing on the receipt and rescanning…'));
   p=SMSParser.parseInvoiceText(mergeOcrCandidates(texts));
-  if(!(p.date&&p.vendor&&Number.isFinite(Number(p.total))&&p.bill_no)){
-    const threshold=enhanceReceiptCanvas(receipt,'threshold');
-    texts.push(await ocrOne(worker,threshold,4,progress,'Running final receipt scan…'));
-  }else{
-    // One extra layout pass protects against a single OCR digit error in totals/dates.
-    texts.push(await ocrOne(worker,contrast,4,progress,'Verifying detected values…'));
+  const adaptive=adaptiveThresholdCanvas(receipt);
+  texts.push(await ocrOne(worker,adaptive,6,progress,'Running high-accuracy thermal receipt scan…'));
+  const mergedNow=SMSParser.parseInvoiceText(mergeOcrCandidates(texts));
+  if(!(mergedNow.date&&mergedNow.vendor&&Number.isFinite(Number(mergedNow.total))&&mergedNow.bill_no)){
+    texts.push(await ocrOne(worker,contrast,4,progress,'Running final layout verification…'));
   }
   try{await worker.setParameters({tessedit_pageseg_mode:'6'})}catch{}
   return mergeOcrCandidates(texts);
