@@ -1,4 +1,4 @@
-const CACHE='sms-expense-v4-receipt-parser';
+const CACHE='sms-expense-v6-full-receipt-ocr';
 const APP=['./','./index.html','./styles.css','./db.js','./parser.js','./app.js','./manifest.webmanifest','./icons/sms-logo.png','./icons/icon-192.png','./icons/icon-512.png','./templates/SMS_Reimbursement_Voucher_Template.xlsx'];
 
 self.addEventListener('install',e=>e.waitUntil(
