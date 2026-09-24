@@ -24,24 +24,41 @@ function findCurrency(text,vendor){
   return{value:'AED',confidence:.55};
 }
 function parseDate(text){
-  const maxYear=new Date().getFullYear()+1;
+  const nowYear=new Date().getFullYear(),maxYear=nowYear+1,currentDecade=Math.floor(nowYear/10)*10;
   const accept=(y,mo,d,confidence)=>{
     y=Number(y);mo=Number(mo);d=Number(d);
     if(y<2000||y>maxYear||mo<1||mo>12||d<1||d>31)return null;
     return{value:`${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`,confidence};
   };
+  const repairYear=raw=>{
+    const digits=String(raw||'').replace(/\D/g,'');
+    if(/^20\d{2}$/.test(digits))return Number(digits);
+    if(/^\d{2}$/.test(digits))return 2000+Number(digits);
+    if(/^20\d$/.test(digits))return currentDecade+Number(digits.slice(-1));
+    if(/^20$/.test(digits))return null;
+    return null;
+  };
   const lines=text.split('\n').map(x=>x.trim()).filter(Boolean);
-  const ordered=[...lines.filter(x=>/(?:inv(?:oice)?\s*date|receipt\s*date|\bdate\b)/i.test(x)),...lines];
+  const labeled=lines.filter(x=>/(?:inv(?:oice)?\s*date|receipt\s*date|\bdate\b)/i.test(x));
+  const ordered=[...labeled,...lines.filter(x=>!labeled.includes(x))];
   for(const line of ordered){
-    let m=line.match(/(?:inv(?:oice)?\s*date|receipt\s*date|\bdate\b)?\s*[:#;=.-]*\s*(20\d{2})\D{1,3}(\d{1,2})\D{1,3}(\d{1,2})/i);
-    if(m){const a=accept(m[1],m[2],m[3],/(?:inv(?:oice)?\s*date|receipt\s*date|\bdate\b)/i.test(line)?.98:.84);if(a)return a}
-    m=line.match(/(?:inv(?:oice)?\s*date|receipt\s*date|\bdate\b)?\s*[:#;=.-]*\s*(\d{1,2})\D{1,3}(\d{1,2})\D{1,3}(20)\D{0,3}(\d)/i);
-    if(m){const a=accept(`${m[3]}${m[4]}`,m[2],m[1],/(?:inv(?:oice)?\s*date|receipt\s*date|\bdate\b)/i.test(line)?.97:.82);if(a)return a}
-    m=line.match(/(?:inv(?:oice)?\s*date|receipt\s*date|\bdate\b)?\s*[:#;=.-]*\s*(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})/i);
-    if(m){let y=Number(m[3]);if(y<100)y+=2000;const a=accept(y,m[2],m[1],/(?:inv(?:oice)?\s*date|receipt\s*date|\bdate\b)/i.test(line)?.97:.8);if(a)return a}
+    const labeledLine=/(?:inv(?:oice)?\s*date|receipt\s*date|\bdate\b)/i.test(line);
+    let m=line.match(/(?:inv(?:oice)?\s*date|receipt\s*date|\bdate\b)?\s*[:#;=.-]*\s*(20\d{2})\s*[-\/.]\s*(\d{1,2})\s*[-\/.]\s*(\d{1,2})/i);
+    if(m){const a=accept(m[1],m[2],m[3],labeledLine?.99:.86);if(a)return a}
+    m=line.match(/(?:inv(?:oice)?\s*date|receipt\s*date|\bdate\b)?\s*[:#;=.-]*\s*(\d{1,2})\s*[-\/.]\s*(\d{1,2})\s*[-\/.]\s*([^\s]{2,7})/i);
+    if(m){
+      const y=repairYear(m[3]);
+      if(y){const a=accept(y,m[2],m[1],labeledLine?.98:.84);if(a)return a}
+    }
+    // OCR often drops the middle '2' in 2026, e.g. 20'6 or 20/6.
+    m=line.match(/(?:inv(?:oice)?\s*date|receipt\s*date|\bdate\b)?\s*[:#;=.-]*\s*(\d{1,2})\D{1,3}(\d{1,2})\D{1,3}20\D{0,3}(\d)(?!\d)/i);
+    if(m){
+      const y=currentDecade+Number(m[3]);
+      const a=accept(y,m[2],m[1],labeledLine?.97:.82);if(a)return a;
+    }
   }
   const named=text.match(/\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{2,4})\b/i);
-  if(named){let y=Number(named[3]);if(y<100)y+=2000;const mo=['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'].indexOf(named[2].toLowerCase().slice(0,3))+1;const a=accept(y,mo,named[1],.8);if(a)return a}
+  if(named){let y=Number(named[3]);if(y<100)y+=2000;const mo=['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'].indexOf(named[2].toLowerCase().slice(0,3))+1;const a=accept(y,mo,named[1],.82);if(a)return a}
   return{value:null,confidence:0};
 }
 function findBillNo(text,vendor){
@@ -93,9 +110,11 @@ function extractAmounts(text){
     if(!/\b(vat|tax)\b/i.test(line)||/trn|tax\s*invoice/i.test(line))continue;
     let vals=lineAmounts(line).filter(v=>v>0&&v<1e7);
     let source=line;
-    if(!vals.length && /vat\s*summary/i.test(line)){
-      source=lines[i+1]||'';
-      vals=lineAmounts(source).filter(v=>v>0&&v<1e7);
+    if(!vals.length && /vat\s*summary|vat\s*code|vat\s*rate|vat\s*\(aed\)/i.test(line)){
+      for(let j=1;j<=2&&!vals.length;j++){
+        source=lines[i+j]||'';
+        vals=lineAmounts(source).filter(v=>v>0&&v<1e7);
+      }
     }
     if(!vals.length)continue;
     const nonPercent=vals.filter(v=>!(v<=20&&new RegExp(`${String(v).replace('.','\\.')}\\s*%`).test(source)));
@@ -105,6 +124,7 @@ function extractAmounts(text){
   return{total,totalConfidence,vat,vatConfidence};
 }
 function findVendor(text){
+  const folded=String(text||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'');
   const known=[
     [/\bADNOC\b/i,'ADNOC Distribution'],
     [/\bENOC\b|\bEPPCO\b/i,'ENOC'],
@@ -115,7 +135,7 @@ function findVendor(text){
     [/\bCANVA\b/i,'Canva'],
     [/\bLOVABLE\b/i,'Lovable']
   ];
-  for(const [re,name] of known)if(re.test(text))return{value:name,confidence:.99};
+  for(const [re,name] of known)if(re.test(folded))return{value:name,confidence:.99};
   const lines=text.split('\n').map(s=>s.trim()).filter(Boolean),skip=/invoice|receipt|tax invoice|date|phone|tel|email|www\.|trn|vat|customer|bill to|address|cashier|page \d|terminal|merchant|payment/i;
   for(const line of lines.slice(0,16)){
     const cleaned=line.replace(/[^\p{L}\p{N}&.' -]/gu,'').replace(/\s{2,}/g,' ').trim();
@@ -126,7 +146,7 @@ function findVendor(text){
   return{value:null,confidence:0};
 }
 function classifyDescription(text,vendor){
-  const s=`${vendor||''}\n${text}`.toLowerCase();
+  const s=`${vendor||''}\n${text}`.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
   if(/\b(enoc|eppco|adnoc|emarat)\b|pump\s*(?:no|number)|\bpetrol\b|\bdiesel\b|\bgasoline\b|\bfuel\b|\bulg[-\s]?9[15]\b|e[-\s]?plus|super\s*98/.test(s))return{value:'Car Fuel',confidence:.99};
   if(/\bparking\b|parking\s*fee|parking\s*ticket/.test(s))return{value:'Parking',confidence:.97};
   if(/\bsalik\b|toll/.test(s))return{value:'Salik',confidence:.97};
