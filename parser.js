@@ -62,12 +62,20 @@ function parseDate(text){
   return{value:null,confidence:0};
 }
 function findBillNo(text,vendor){
-  const invoice=[/(?:invoice\s*(?:no\.?|number|#)|inv\.?\s*no\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/-]{2,})/i,.97];
-  const receipt=[/(?:receipt\s*(?:no\.?|number|#))\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/-]{2,})/i,.94];
-  const bill=[/(?:bill\s*(?:no\.?|number|#))\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/-]{2,})/i,.92];
+  const invoice=[/(?:invoice\s*(?:no\.?|number|#)|inv\.?\s*no\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/\-\)\]\|Il]{2,})/i,.97];
+  const receipt=[/(?:receipt\s*(?:no\.?|number|#))\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/\-\)\]\|Il]{2,})/i,.94];
+  const bill=[/(?:bill\s*(?:no\.?|number|#))\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/\-\)\]\|Il]{2,})/i,.92];
   const fuel=/ENOC|EPPCO|ADNOC|Emarat/i.test(vendor||'');
+  const clean=raw=>{
+    let v=String(raw||'').trim();
+    if(fuel){
+      v=v.replace(/[\)\]\|Il]/g,'1').replace(/[Oo]/g,'0');
+      if(/^[0-9\/\-]+$/.test(v))v=v.replace(/[\/\-]/g,'');
+    }
+    return v.replace(/[^A-Z0-9\/-]/gi,'').trim();
+  };
   const patterns=fuel?[receipt,invoice,bill]:[invoice,receipt,bill];
-  for(const [re,confidence] of patterns){const m=text.match(re);if(m){const v=m[1].replace(/[^A-Z0-9\/-]/gi,'').trim();if(v&&!/^\d{1,2}$/.test(v))return{value:v,confidence}}}
+  for(const [re,confidence] of patterns){const m=text.match(re);if(m){const v=clean(m[1]);if(v&&!/^\d{1,2}$/.test(v))return{value:v,confidence}}}
   return{value:null,confidence:0};
 }
 function findJobNo(text){const m=text.match(/(?:enq(?:uiry)?|job|project|work\s*order|wo)\s*(?:no\.?|number|#)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/-]{2,})/i);return m?{value:m[1].trim(),confidence:.84}:{value:null,confidence:0}}
@@ -91,7 +99,12 @@ function extractAmounts(text){
     if(!score)continue;
     if(/sub\s*total|subtotal|taxable|vat|tax\s*amount|discount|balance\s*amount|tender\s*amount|total\s*qty|approval|batch|terminal|pump|trn|merchant\s*id|price\b|u\.?price|quantity|\bqty\b/i.test(lower))score-=90;
     if(score<=20)continue;
-    const vals=lineAmounts(line).filter(v=>v>=0&&v<1e8);
+    let vals=lineAmounts(line).filter(v=>v>=0&&v<1e8);
+    const split=line.match(/(?:AED|DHS?|USD|EUR|GBP|SAR|QAR|OMR|INR)?\s*[:=]?\s*(\d{1,7})\s+(\d{2})\s*$/i);
+    if(split&&score>=110){
+      const repaired=Number(`${split[1]}.${split[2]}`);
+      if(Number.isFinite(repaired))vals=[repaired];
+    }
     if(vals.length){
       const value=vals[vals.length-1];
       if(value===0&&score<140)continue;
@@ -160,7 +173,12 @@ function classifyDescription(text,vendor){
 }
 function parseInvoiceText(raw){
   const text=normalizeText(raw),date=parseDate(text),vendor=findVendor(text),billNo=findBillNo(text,vendor.value),jobNo=findJobNo(text),currency=findCurrency(text,vendor.value),amounts=extractAmounts(text),description=classifyDescription(text,vendor.value);
-  return{date:date.value,vendor:vendor.value,bill_no:billNo.value,enq_job_no:jobNo.value,currency:currency.value,total:amounts.total,vat:amounts.vat,description:description.value,confidence:{date:date.confidence,vendor:vendor.confidence,bill_no:billNo.confidence,enq_job_no:jobNo.confidence,currency:currency.confidence,amount:amounts.totalConfidence,vat:amounts.vatConfidence,description:description.confidence}};
+  let vat=amounts.vat,vatConfidence=amounts.vatConfidence;
+  if(vat==null&&Number.isFinite(Number(amounts.total))&&/ENOC|EPPCO|ADNOC|Emarat/i.test(vendor.value||'')){
+    vat=Math.round((Number(amounts.total)*5/105)*100)/100;
+    vatConfidence=.82;
+  }
+  return{date:date.value,vendor:vendor.value,bill_no:billNo.value,enq_job_no:jobNo.value,currency:currency.value,total:amounts.total,vat,description:description.value,confidence:{date:date.confidence,vendor:vendor.confidence,bill_no:billNo.confidence,enq_job_no:jobNo.confidence,currency:currency.confidence,amount:amounts.totalConfidence,vat:vatConfidence,description:description.confidence}};
 }
 window.SMSParser={parseInvoiceText};
 })();
